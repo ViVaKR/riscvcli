@@ -9,7 +9,7 @@
     <AssemblyName>riscvcli</AssemblyName>
 
     <!-- 프로젝트 버전 (scripts/release.sh 가 이 값을 갱신함) -->
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
 
     <!-- Native AOT 및 완전 단일 바이너리 설정 -->
     <PublishAot>true</PublishAot>
