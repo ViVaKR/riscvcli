@@ -3,7 +3,8 @@ using System.Text;
 // =========================================================================
 // ProjectInit.cs
 // `riscvcli init` — RISC-V 베어메탈(QEMU virt) 학습용 프로젝트 골격을 생성한다.
-//   Boot.S(_start) + Main.S(main) + platform.S(UART/종료) + link.ld
+//   Boot.riscv(_start) + Main.riscv(main) + platform.riscv(UART/종료) + link.ld
+//   + hun.rvmacros(매크로) + platform.rvinclude(상수) + .gitattributes(Linguist)
 //   + Zig / .NET(/PowerShell) 오케스트레이터 + (선택) Rust no_std 라이브러리
 // =========================================================================
 internal static class ProjectInit
@@ -83,7 +84,7 @@ internal static class ProjectInit
     Console.WriteLine($" riscvcli init: {pascalName}");
     Console.WriteLine($" 위치: {Path.GetFullPath(root)}");
     Console.WriteLine($" 대상: {arch.Name} ({arch.March}, {arch.Mabi}) — QEMU virt 베어메탈");
-    Console.WriteLine($" 구성: Assembly(src/Boot.S, Main.S, libs/platform.S) + link.ld"
+    Console.WriteLine($" 구성: Assembly(src/Boot.riscv, Main.riscv, libs/platform.riscv) + link.ld"
       + " + build.zig + hun-build.cs"
       + (withPwsh ? " + hun-build.ps1" : "")
       + (withRust ? " + Rust(no_std, app/RustLibs/rust_core)" : ""));
@@ -116,18 +117,17 @@ internal static class ProjectInit
     }
 
     // --- 어셈블리 ---
-    File.WriteAllText(Path.Combine(root, "src", "Boot.S"), AsmTemplates.BootS(pascalName, arch) + "\n");
-    File.WriteAllText(Path.Combine(root, "src", "Main.S"), AsmTemplates.MainS(pascalName, arch, withRust) + "\n");
-    File.WriteAllText(Path.Combine(root, "src", "libs", "platform.S"), AsmTemplates.PlatformS(arch) + "\n");
-    File.WriteAllText(Path.Combine(root, "src", "includes", "hun.macros.inc"), AsmTemplates.HunMacrosInc(arch) + "\n");
+    File.WriteAllText(Path.Combine(root, "src", "Boot" + AsmExt.Preprocessed), AsmTemplates.BootS(pascalName, arch) + "\n");
+    File.WriteAllText(Path.Combine(root, "src", "Main" + AsmExt.Preprocessed), AsmTemplates.MainS(pascalName, arch, withRust) + "\n");
+    File.WriteAllText(Path.Combine(root, "src", "libs", "platform" + AsmExt.Preprocessed), AsmTemplates.PlatformS(arch) + "\n");
+    File.WriteAllText(Path.Combine(root, "src", "includes", "hun" + AsmExt.Macros), AsmTemplates.HunRvMacros(arch) + "\n");
+    File.WriteAllText(Path.Combine(root, "src", "constants", "platform" + AsmExt.Include), AsmTemplates.PlatformRvInclude(arch) + "\n");
 
-    // --- 빈 디렉토리 자리 표시(.gitkeep) ---
-    foreach (var dir in new[] { "constants", "data" })
-    {
-      File.WriteAllText(Path.Combine(root, "src", dir, ".gitkeep"), "");
-    }
+    // --- 빈 디렉토리 자리 표시(.gitkeep) — constants/ 는 platform.rvinclude 가 있어서 불필요 ---
+    File.WriteAllText(Path.Combine(root, "src", "data", ".gitkeep"), "");
 
     File.WriteAllText(Path.Combine(root, ".gitignore"), MiscTemplates.Gitignore() + "\n");
+    File.WriteAllText(Path.Combine(root, ".gitattributes"), MiscTemplates.GitAttributes() + "\n");
     File.WriteAllText(Path.Combine(root, "README.md"), ReadmeTemplates.ProjectReadme(pascalName, arch, withRust, withPwsh) + "\n");
 
     Console.WriteLine("생성 완료!");

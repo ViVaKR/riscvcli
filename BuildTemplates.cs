@@ -7,7 +7,8 @@
 // 두 스크립트는 같은 순서로 동작한다.
 //   1) (선택) Rust no_std 라이브러리 빌드
 //   2) 툴체인 탐지: GNU riscv64-unknown-elf- → riscv64-elf- → riscv64-linux-gnu- → clang + ld.lld
-//   3) src/ 아래 모든 .S/.s 어셈블 → link.ld 로 링크 → bin/<이름>.elf
+//   3) src/ 아래 모든 .riscv/.rv(구 .S/.s 포함) 어셈블 → link.ld 로 링크 → bin/<이름>.elf
+//      (.rvmacros / .rvinclude 는 .include 전용이라 어셈블 대상이 아니다)
 //   4) qemu-system-riscv{64|32} -machine virt -bios none -kernel 로 실행
 //
 // 내용 안의 __XLEN__ / __PROJECT__ 토큰은 생성 시점에 치환된다.
@@ -105,14 +106,14 @@ Console.WriteLine($"\n▶ 툴체인: {tc.Name}");
 
 // --- 2단계: 어셈블리 파일 수집 ---
 var asmFiles = Directory.EnumerateFiles("src", "*", SearchOption.AllDirectories)
-    .Where(f => f.EndsWith(".S", StringComparison.Ordinal) || f.EndsWith(".s", StringComparison.Ordinal))
+    .Where(IsAsmSource)
     .Select(f => f.Replace('\\', '/'))
     .OrderBy(f => f, StringComparer.Ordinal)
     .ToList();
 
 if (asmFiles.Count == 0)
 {
-    Console.Error.WriteLine("src/ 아래에 어셈블리 파일(.S/.s)이 한 개도 없네!");
+    Console.Error.WriteLine("src/ 아래에 어셈블리 파일(.riscv/.rv)이 한 개도 없네!");
     return 1;
 }
 
@@ -130,9 +131,10 @@ foreach (var src in asmFiles)
     var asmArgs = new List<string>(tc.AsmArgs);
     if (tc.UsesDriver)
     {
-        // .S 는 전처리기(cpp)를 통과시키고, .s 는 그대로 어셈블한다
+        // 확장자를 컴파일러가 모르므로 -x 로 언어를 직접 알려준다.
+        // .riscv(구 .S)는 전처리기(cpp)를 통과시키고, .rv(구 .s)는 그대로 어셈블한다
         asmArgs.Add("-x");
-        asmArgs.Add(src.EndsWith(".S", StringComparison.Ordinal) ? "assembler-with-cpp" : "assembler");
+        asmArgs.Add(UsesCpp(src) ? "assembler-with-cpp" : "assembler");
     }
     asmArgs.AddRange(["-I", ".", "-o", obj, src]);
     if (Exec(tc.AsmExe, asmArgs) != 0) return 1;
@@ -183,6 +185,13 @@ return exit;
 // =========================================================================
 // 함수들
 // =========================================================================
+bool IsAsmSource(string f)
+    => f.EndsWith(".riscv", StringComparison.Ordinal) || f.EndsWith(".rv", StringComparison.Ordinal)
+    || f.EndsWith(".S", StringComparison.Ordinal) || f.EndsWith(".s", StringComparison.Ordinal);
+
+bool UsesCpp(string f)
+    => f.EndsWith(".riscv", StringComparison.Ordinal) || f.EndsWith(".S", StringComparison.Ordinal);
+
 string? Which(string name)
 {
     var dirs = (Environment.GetEnvironmentVariable("PATH") ?? "")
@@ -375,12 +384,13 @@ if (-not $tc) {
 }
 Write-Host "▶ 툴체인: $($tc.Name)" -ForegroundColor Yellow
 
-# 2. 어셈블리 파일 수집 (src/ 아래 .S / .s)
+# 2. 어셈블리 파일 수집 (src/ 아래 .riscv / .rv, 구 .S / .s 포함 — .rvmacros / .rvinclude 는 제외)
+$asmExts = @('.riscv', '.rv', '.S', '.s')
 $asmFiles = Get-ChildItem -Path 'src' -Recurse -File |
-    Where-Object { $_.Extension -ceq '.S' -or $_.Extension -ceq '.s' } |
+    Where-Object { $asmExts -ccontains $_.Extension } |
     ForEach-Object { ([System.IO.Path]::GetRelativePath($PSScriptRoot, $_.FullName)) -replace '\\', '/' } |
     Sort-Object { $_ } -CaseSensitive
-if (-not $asmFiles) { Write-Warning '어셈블리 파일(.S/.s)이 없습니다.'; exit 1 }
+if (-not $asmFiles) { Write-Warning '어셈블리 파일(.riscv/.rv)이 없습니다.'; exit 1 }
 
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 if (Test-Path $objDir) { Remove-Item $objDir -Recurse -Force }
@@ -393,9 +403,11 @@ foreach ($src in $asmFiles) {
     $obj = Join-Path $objDir (($src -replace '/', '_') + '.o')
     $a = @() + $tc.AsmArgs
     if ($tc.UsesDriver) {
-        # .S 는 전처리기(cpp)를 통과시키고, .s 는 그대로 어셈블한다
+        # 확장자를 컴파일러가 모르므로 -x 로 언어를 직접 알려준다.
+        # .riscv(구 .S)는 전처리기(cpp)를 통과시키고, .rv(구 .s)는 그대로 어셈블한다
+        $usesCpp = $src.EndsWith('.riscv', [StringComparison]::Ordinal) -or $src.EndsWith('.S', [StringComparison]::Ordinal)
         $a += '-x'
-        $a += $(if ($src.EndsWith('.S', [StringComparison]::Ordinal)) { 'assembler-with-cpp' } else { 'assembler' })
+        $a += $(if ($usesCpp) { 'assembler-with-cpp' } else { 'assembler' })
     }
     $a += @('-I', '.', '-o', $obj, $src)
     Invoke-Native $tc.AsmExe $a

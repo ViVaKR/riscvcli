@@ -3,7 +3,7 @@
 //  - Arch      : RV64 / RV32 에 따라 달라지는 값 모음 (ISA 문자열, 로드/스토어 명령 등)
 //  - Templates : `riscvcli new` 가 생성하는 단일 파일 템플릿
 //
-// 주의: 생성되는 .S 파일은 전처리기(cpp)를 통과할 수 있으므로
+// 주의: 생성되는 .riscv 파일(구 .S)은 전처리기(cpp)를 통과할 수 있으므로
 //       주석 줄을 영문 지시어(if, else, include, define ...)나 숫자로 시작하지 말고,
 //       주석 안에 작은따옴표(')를 쓰지 않는다.
 // =========================================================================
@@ -24,6 +24,25 @@ internal sealed record Arch(int Xlen)
 
     /// <summary>레지스터 하나의 바이트 수 (8 또는 4)</summary>
     public int Sz => Xlen / 8;
+}
+
+/// <summary>
+/// riscvcli 가 다루는 파일 확장자 모음.
+/// GitHub Linguist 에는 .gitattributes 의 linguist-language=Assembly 로 매핑한다.
+/// </summary>
+internal static class AsmExt
+{
+    public const string Preprocessed = ".riscv";    // 전처리기(cpp) 통과 — 구 .S
+    public const string Plain = ".rv";              // 전처리 없이 순수 어셈블 — 구 .s
+    public const string Include = ".rvinclude";     // 상수/심볼 인클루드 (.equ 등)
+    public const string Macros = ".rvmacros";       // 매크로 모음 (.macro / .endm)
+
+    /// <summary>이미 어셈블리 소스 확장자가 붙어 있는지 (구 .S / .s 도 그대로 존중)</summary>
+    public static bool IsSource(string path)
+        => path.EndsWith(Preprocessed, StringComparison.Ordinal)
+        || path.EndsWith(Plain, StringComparison.Ordinal)
+        || path.EndsWith(".S", StringComparison.Ordinal)
+        || path.EndsWith(".s", StringComparison.Ordinal);
 }
 
 internal static class Templates

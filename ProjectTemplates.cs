@@ -3,11 +3,11 @@ using System.Text;
 // =========================================================================
 // ProjectTemplates.cs
 // riscvcli init 이 생성하는 파일들의 템플릿 모음
-//   - AsmTemplates    : Boot.S / Main.S / platform.S / hun.macros.inc
+//   - AsmTemplates    : Boot.riscv / Main.riscv / platform.riscv / hun.rvmacros / platform.rvinclude
 //   - LinkerTemplates : link.ld (QEMU virt, RAM 0x80000000)
 //   - RustTemplates   : no_std staticlib (UART 직접 접근)
 //   - ZigTemplates    : build.zig (riscv freestanding 오케스트레이터)
-//   - ReadmeTemplates / MiscTemplates
+//   - ReadmeTemplates / MiscTemplates (.gitignore, .gitattributes)
 //
 // 원시 문자열(""") 의 닫는 따옴표를 0열에 두어, 파일 내용이 들여쓰기 없이 그대로 출력된다.
 // =========================================================================
@@ -18,11 +18,11 @@ internal static class AsmTemplates
       ["ra", "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"];
 
     // ---------------------------------------------------------------------
-    // src/Boot.S — 리셋 직후 가장 먼저 실행되는 코드 (_start)
+    // src/Boot.riscv — 리셋 직후 가장 먼저 실행되는 코드 (_start)
     // ---------------------------------------------------------------------
     public static string BootS(string projectName, Arch a) => $"""
 #-----------------------------------------------------
-# {projectName} — Boot (src/Boot.S)
+# {projectName} — Boot (src/Boot.riscv)
 # QEMU virt 머신은 -bios none 일 때 RAM 시작 주소 0x80000000 부터 실행한다.
 # 링커 스크립트(link.ld)가 .text.init 을 맨 앞에 배치하므로 _start 가 그 주소가 된다.
 # 하는 일: gp/sp 설정 -> BSS 0 으로 초기화 -> main 호출 -> 종료 코드로 QEMU 종료
@@ -64,7 +64,7 @@ _start:
 """;
 
     // ---------------------------------------------------------------------
-    // src/Main.S — 사용자 진입점 (main)
+    // src/Main.riscv — 사용자 진입점 (main)
     // ---------------------------------------------------------------------
     public static string MainS(string projectName, Arch a, bool withRust)
     {
@@ -94,11 +94,11 @@ _start:
 
         return $"""
 #-----------------------------------------------------
-# {projectName} — Entry Point (src/Main.S)
+# {projectName} — Entry Point (src/Main.riscv)
 # Target: {a.Name} ({a.March}, {a.Mabi}) — QEMU virt 베어메탈
 # riscvcli init 으로 생성됨
 #-----------------------------------------------------
-    .include "src/includes/hun.macros.inc"
+    .include "src/includes/hun.rvmacros"
 
     CODE_SECTION
     .global main
@@ -111,7 +111,7 @@ main:
     addi    s0, sp, 16              # Frame pointer 설정
 
     # --- Main Logic ---
-    PRINT   msg_hello               # UART 로 문자열 출력 (src/libs/platform.S 의 uart_puts)
+    PRINT   msg_hello               # UART 로 문자열 출력 (src/libs/platform.riscv 의 uart_puts)
 {rustCall}
     # 예) 레지스터 값을 16진수로 찍어보기:
     #   li      a0, 255
@@ -124,7 +124,7 @@ main:
     {a.Load}      {raSt}# Return address 복원
     {a.Load}      {s0St}# Frame pointer 복원
     addi    sp, sp, 16
-    ret                             # Boot.S 로 돌아가면 QEMU 가 종료된다
+    ret                             # Boot.riscv 로 돌아가면 QEMU 가 종료된다
 
     RODATA_SECTION
 msg_hello:
@@ -133,14 +133,14 @@ msg_hello:
     }
 
     // ---------------------------------------------------------------------
-    // src/libs/platform.S — QEMU virt 플랫폼 런타임 (UART, 종료)
+    // src/libs/platform.riscv — QEMU virt 플랫폼 런타임 (UART, 종료)
     // ---------------------------------------------------------------------
     public static string PlatformS(Arch a)
     {
         int raOff = 32 - a.Sz;
         return $"""
 #-----------------------------------------------------
-# platform.S — QEMU virt 플랫폼 런타임
+# platform.riscv — QEMU virt 플랫폼 런타임
 #   uart_putc    : a0 = 문자 하나 출력
 #   uart_puts    : a0 = NUL 로 끝나는 문자열 주소
 #   uart_put_hex : a0 = 값을 0x... 16진수로 출력
@@ -148,7 +148,7 @@ msg_hello:
 #   qemu_exit    : a0 = 종료 코드 (0 이면 성공) — 돌아오지 않음
 # 모두 호출 규약(a0~a7 인자, t0~t6 임시)을 지키므로 일반 함수처럼 call 하면 된다.
 #-----------------------------------------------------
-    .include "src/includes/hun.macros.inc"
+    .include "src/includes/hun.rvmacros"
 
     CODE_SECTION
 
@@ -238,9 +238,33 @@ qemu_exit:
     }
 
     // ---------------------------------------------------------------------
-    // src/includes/hun.macros.inc — 공용 매크로 (GNU as / LLVM 공용 문법)
+    // src/constants/platform.rvinclude — QEMU virt 플랫폼 상수 (.equ 모음)
     // ---------------------------------------------------------------------
-    public static string HunMacrosInc(Arch a)
+    public static string PlatformRvInclude(Arch a) => $"""
+# =================================================
+#  제목: 플랫폼 상수 (platform.rvinclude) — RISC-V {a.Name}, QEMU -machine virt
+#  목적: 주소와 비트 상수를 한 곳에 모은다.
+#        매크로 파일(hun.rvmacros)이 자동으로 불러오므로 보통은 따로 include 하지 않아도 된다.
+# =================================================
+    .ifndef PLATFORM_RVINCLUDE
+    .set    PLATFORM_RVINCLUDE, 1
+
+    .equ    XLEN,           {a.Xlen}
+    .equ    SZREG,          {a.Sz}
+    .equ    UART0_BASE,     0x10000000      # NS16550A UART
+    .equ    UART_LSR,       5               # Line Status Register 오프셋
+    .equ    UART_LSR_THRE,  0x20            # 송신 버퍼 비어 있음 비트
+    .equ    SYSCON_BASE,    0x100000        # sifive_test (종료 장치)
+    .equ    SYSCON_PASS,    0x5555
+    .equ    SYSCON_FAIL,    0x3333
+
+    .endif
+""";
+
+    // ---------------------------------------------------------------------
+    // src/includes/hun.rvmacros — 공용 매크로 (GNU as / LLVM 공용 문법)
+    // ---------------------------------------------------------------------
+    public static string HunRvMacros(Arch a)
     {
         int sz = a.Sz;
         int frameMin = (13 * sz + 15) / 16 * 16; // ra + s0~s11 = 13개 레지스터, 16바이트 정렬
@@ -260,22 +284,15 @@ qemu_exit:
 
         return $"""
 # =================================================
-#  제목: 공용 매크로 모음 (hun.macros.inc) — RISC-V {a.Name}
+#  제목: 공용 매크로 모음 (hun.rvmacros) — RISC-V {a.Name}
 #  목적: 섹션 선언, 함수 프롤로그/에필로그, UART 출력을 짧게 쓰기 위한 매크로
 #        GNU as 와 LLVM(clang) 양쪽에서 동작하도록 .macro / .endm 만 사용
 # =================================================
-    .ifndef HUN_MACROS_INC
-    .set    HUN_MACROS_INC, 1
+    .ifndef HUN_RVMACROS
+    .set    HUN_RVMACROS, 1
 
-# --- 플랫폼 상수 (QEMU -machine virt) ---
-    .equ    XLEN,           {a.Xlen}
-    .equ    SZREG,          {sz}
-    .equ    UART0_BASE,     0x10000000      # NS16550A UART
-    .equ    UART_LSR,       5               # Line Status Register 오프셋
-    .equ    UART_LSR_THRE,  0x20            # 송신 버퍼 비어 있음 비트
-    .equ    SYSCON_BASE,    0x100000        # sifive_test (종료 장치)
-    .equ    SYSCON_PASS,    0x5555
-    .equ    SYSCON_FAIL,    0x3333
+# --- 플랫폼 상수 (UART0_BASE, SYSCON_BASE ...) 는 constants/ 의 .rvinclude 에 모아 둔다 ---
+    .include "src/constants/platform.rvinclude"
 
 # ------------------------------------------------------
 # [섹션 선언] 링커 스크립트(link.ld)의 섹션 이름과 맞춰져 있다.
@@ -597,11 +614,12 @@ const std = @import("std");
 // QEMU(qemu-system-riscv{{a.Xlen}}) 만 있으면 된다.
 // (riscvcli init 으로 생성됨 — zig 0.16 기준, 다른 버전에서는 API가 다를 수 있으니 확인해줘)
 
-// 어셈블리 소스 목록 — 새 .S 파일을 추가하면 여기에도 한 줄 추가해줘.
+// 어셈블리 소스 목록 — 새 .riscv / .rv 파일을 추가하면 여기에도 한 줄 추가해줘.
+//   .riscv : 전처리기(cpp) 통과,  .rv : 전처리 없이 순수 어셈블
 const asm_sources = [_][]const u8{
-    "src/Boot.S",
-    "src/Main.S",
-    "src/libs/platform.S",
+    "src/Boot.riscv",
+    "src/Main.riscv",
+    "src/libs/platform.riscv",
 };
 
 pub fn build(b: *std.Build) void {
@@ -625,7 +643,12 @@ pub fn build(b: *std.Build) void {
     });
 
     for (asm_sources) |src| {
-        exe.root_module.addCSourceFile(.{ .file = b.path(src), .flags = &.{} });
+        // Zig 는 .riscv / .rv 확장자를 모르므로 어셈블리 언어를 직접 지정한다.
+        exe.root_module.addCSourceFile(.{
+            .file = b.path(src),
+            .language = if (std.mem.endsWith(u8, src, ".rv")) .assembly else .assembly_with_preprocessor,
+            .flags = &.{},
+        });
     }
     exe.root_module.addIncludePath(b.path("."));
     exe.setLinkerScript(b.path("link.ld"));
@@ -658,6 +681,27 @@ pub fn build(b: *std.Build) void {
 
 internal static class MiscTemplates
 {
+    public static string GitAttributes() => """
+# ==============================================================================
+# 🪷 GitHub Linguist 설정: RISC-V 어셈블리를 Assembly 로 인식시킨다
+# ==============================================================================
+
+# 1. RISC-V 어셈블리 소스코드 (.riscv = cpp 통과, .rv = 순수 어셈블)
+*.riscv       linguist-language=Assembly linguist-detectable=true
+*.rv          linguist-language=Assembly linguist-detectable=true
+
+# 2. RISC-V 전용 공용 매크로/인클루드
+*.rvinclude   linguist-language=Assembly linguist-detectable=true
+*.rvmacros    linguist-language=Assembly linguist-detectable=true
+
+# 3. 베어메탈 링커 스크립트
+*.ld          linguist-language=Linker-Script
+
+# 4. 빌드 산출물은 언어 통계에서 제외
+*.elf         linguist-vendored
+*.o           linguist-vendored
+""";
+
     public static string Gitignore() => """
 # 빌드 결과물
 bin/
@@ -690,8 +734,8 @@ OS 없이 **QEMU virt 머신**에서 직접 실행되며, Ubuntu 와 Apple Silic
 ## 동작 원리
 
 1. QEMU 가 `-bios none -kernel x.elf` 로 ELF 를 RAM `0x80000000` 에 올리고 첫 명령부터 실행
-2. `src/Boot.S` 의 `_start` 가 스택/BSS 를 준비한 뒤 `main` 호출
-3. `src/Main.S` 의 `main` 이 UART(`0x10000000`)로 문자 출력
+2. `src/Boot.riscv` 의 `_start` 가 스택/BSS 를 준비한 뒤 `main` 호출
+3. `src/Main.riscv` 의 `main` 이 UART(`0x10000000`)로 문자 출력
 4. `main` 이 돌아오면 `qemu_exit` 가 종료 장치(`0x100000`)에 값을 써서 QEMU 종료
 
 ## 구성
@@ -705,14 +749,24 @@ OS 없이 **QEMU virt 머신**에서 직접 실행되며, Ubuntu 와 Apple Silic
 ├── link.ld                # 링커 스크립트 (RAM 0x80000000, 스택/BSS 심볼)
 ├── build.zig              # 오케스트레이터 (Zig)
 ├── hun-build.cs           # 오케스트레이터 (.NET file-based app){pwshRow}{rustTree}
+├── .gitattributes         # GitHub Linguist 설정 (.riscv/.rv/.rvmacros/.rvinclude → Assembly)
 └── src/
-    ├── Boot.S             # _start — 리셋 직후 코드
-    ├── Main.S             # main — 여기서부터 작성
-    ├── libs/platform.S    # uart_putc/puts/put_hex/put_dec, qemu_exit
-    ├── includes/hun.macros.inc   # 섹션/함수/UART 매크로
-    ├── constants/
+    ├── Boot.riscv         # _start — 리셋 직후 코드
+    ├── Main.riscv         # main — 여기서부터 작성
+    ├── libs/platform.riscv       # uart_putc/puts/put_hex/put_dec, qemu_exit
+    ├── includes/hun.rvmacros     # 섹션/함수/UART 매크로
+    ├── constants/platform.rvinclude   # UART/종료 장치 주소 상수 (.equ)
     └── data/
 ```
+
+## 파일 확장자
+
+| 확장자 | 용도 |
+|--------|------|
+| `.riscv` | 어셈블리 소스 — **전처리기(cpp) 통과** (`#include`, `#define` 사용 가능) |
+| `.rv` | 어셈블리 소스 — 전처리 없이 순수 어셈블 |
+| `.rvmacros` | 매크로 모음 (`.macro` / `.endm`) — 어셈블 대상이 아니라 `.include` 로 불러온다 |
+| `.rvinclude` | 상수 / 심볼 인클루드 (`.equ`) — 마찬가지로 `.include` 전용 |
 
 ## 필요한 도구
 
@@ -761,7 +815,8 @@ gdb-multiarch bin/{projectName.ToLowerInvariant()}.elf     # macOS: riscv64-elf-
 ## 참고
 
 - QEMU 를 강제로 끝내려면 `Ctrl-A` 누른 뒤 `X`
-- `src/` 아래 `.S`/`.s` 파일은 `hun-build.cs`/`hun-build.ps1` 이 자동으로 모두 어셈블한다.
+- `src/` 아래 `.riscv`/`.rv` 파일(구 `.S`/`.s` 도 인식)은 `hun-build.cs`/`hun-build.ps1` 이 자동으로 모두 어셈블한다.
+  `.rvmacros`/`.rvinclude` 는 어셈블 대상이 아니라 `.include` 로만 쓰인다.
   `build.zig` 는 `asm_sources` 목록에 직접 추가해야 한다.
 - 새 파일은 `riscvcli new src/Foo -t function -n foo` 로 만들 수 있다.
 """;
